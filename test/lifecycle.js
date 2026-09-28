@@ -72,6 +72,81 @@ test('ready() - probes the server when port/host/udp are not supplied', async (t
   t.is(client.udp, false)
 })
 
+test('ready() - empty advertised host binds loopback, not every interface', async (t) => {
+  const testnet = await createTestnet(t)
+  const echo = await tcpEchoServer(t)
+  const advertisedPort = await getFreePort()
+  const remote = await rawServer(t, testnet, {
+    port: echo.address().port,
+    host: '127.0.0.1',
+    advertisedHost: '',
+    advertisedPort
+  })
+  const { logger, calls } = createLogger()
+
+  const client = new HolesailClient({
+    invite: remote.invite,
+    bootstrap: testnet.bootstrap,
+    logger
+  })
+  t.teardown(() => client.close())
+  await client.ready()
+
+  const bound = client.proxy.address()
+  t.is(client.host, '127.0.0.1')
+  t.is(bound.address, '127.0.0.1')
+  t.is(client.port, advertisedPort)
+  t.ok(calls.warn.some((args) => String(args[0]).includes('(empty)')))
+})
+
+test('ready() - advertised wildcard or non-local host is not bound', async (t) => {
+  const testnet = await createTestnet(t)
+  const echo = await tcpEchoServer(t)
+
+  for (const advertisedHost of ['0.0.0.0', '::', '192.0.2.1']) {
+    const advertisedPort = await getFreePort()
+    const remote = await rawServer(t, testnet, {
+      port: echo.address().port,
+      host: '127.0.0.1',
+      advertisedHost,
+      advertisedPort
+    })
+    const client = new HolesailClient({
+      invite: remote.invite,
+      bootstrap: testnet.bootstrap
+    })
+    t.teardown(() => client.close())
+    await client.ready()
+
+    t.is(client.host, '127.0.0.1', advertisedHost)
+    t.is(client.proxy.address().address, '127.0.0.1', advertisedHost)
+    t.is(client.port, advertisedPort, advertisedHost)
+  }
+})
+
+test('ready() - a probed port that is already taken is not bound', async (t) => {
+  const testnet = await createTestnet(t)
+  const echo = await tcpEchoServer(t)
+  const held = await tcpEchoServer(t)
+  const heldPort = held.address().port
+  const remote = await rawServer(t, testnet, {
+    port: echo.address().port,
+    host: '127.0.0.1',
+    advertisedPort: heldPort
+  })
+
+  const client = new HolesailClient({
+    invite: remote.invite,
+    bootstrap: testnet.bootstrap
+  })
+  t.teardown(() => client.close())
+  await client.ready()
+
+  t.is(client.host, '127.0.0.1')
+  t.is(client.proxy.address().address, '127.0.0.1')
+  t.not(client.proxy.address().port, heldPort)
+})
+
 test('ready() - explicit port/host are kept even when udp still needs probing', async (t) => {
   const testnet = await createTestnet(t)
   const echo = await tcpEchoServer(t)

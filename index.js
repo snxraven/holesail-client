@@ -4,6 +4,7 @@ const b4a = require('b4a')
 const ReadyResource = require('ready-resource')
 const { parse } = require('@holesail/invite')
 const proto = require('@holesail/protocol')
+const { resolveBind } = require('./lib/bindable.js')
 
 const { MODE_TUNNEL, MODE_PROBE } = proto
 
@@ -42,15 +43,35 @@ class HolesailClient extends ReadyResource {
 
   async _start() {
     this.state = 'starting'
-    const needProbe = this.port === null || this.host === null || this.udp === null
+    const explicitPort = this.port !== null
+    const explicitHost = this.host !== null
+    const needProbe = !explicitPort || !explicitHost || this.udp === null
     let config
     if (needProbe) {
       config = await HolesailClient.probe(this.invite, this.dht)
     }
 
-    this.port = this.port ?? config.port ?? DEFAULT.port
-    this.host = this.host ?? config.host ?? DEFAULT.host
+    const port = this.port ?? config.port ?? DEFAULT.port
+    const host = this.host ?? config.host ?? DEFAULT.host
     this.udp = this.udp ?? config.udp ?? DEFAULT.udp
+
+    const chosen = await resolveBind({
+      port,
+      host,
+      udp: this.udp,
+      explicitPort,
+      explicitHost,
+      fallbackHost: DEFAULT.host,
+      fallbackPort: DEFAULT.port
+    })
+    if (chosen.host !== host || chosen.port !== port) {
+      this.logger.warn(
+        `Refusing to bind ${host || '(empty)'}:${port}; listening on ${chosen.host}:${chosen.port}`
+      )
+    }
+    this.port = chosen.port
+    this.host = chosen.host
+
     if (this.udp) await this.handleUDP()
     else await this.handleTCP()
   }
