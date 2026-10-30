@@ -109,6 +109,7 @@ async function rawServer(t, testnet, opts = {}) {
 
   function onConnection(stream) {
     stream.on('error', () => {})
+    const udpCapture = opts.udp ? libNet.bufferUdpMessages(stream) : null
 
     let buffer = b4a.alloc(0)
     const onData = (chunk) => {
@@ -121,12 +122,14 @@ async function rawServer(t, testnet, opts = {}) {
 
       if (!b4a.equals(gotCapability, capability)) {
         stats.rejected++
+        if (udpCapture) udpCapture.stop()
         stream.destroy()
         return
       }
 
       if (mode === MODE_PROBE) {
         stats.probes++
+        if (udpCapture) udpCapture.stop()
         stream.end(
           proto.encodeProbeResponse({
             port: opts.advertisedPort ?? opts.port,
@@ -140,11 +143,15 @@ async function rawServer(t, testnet, opts = {}) {
       if (mode === MODE_TUNNEL) {
         stats.tunnels++
         const pipeOpts = { port: opts.port, host: opts.host }
-        if (opts.udp) libNet.pipeUdpFramedServer(stream, leftover, pipeOpts)
-        else libNet.pipeTcpServer(stream, leftover, pipeOpts)
+        if (opts.udp) {
+          udpCapture.stop()
+          pipeOpts.pending = udpCapture.pending
+          libNet.pipeUdpFramedServer(stream, leftover, pipeOpts)
+        } else libNet.pipeTcpServer(stream, leftover, pipeOpts)
         return
       }
 
+      if (udpCapture) udpCapture.stop()
       stream.destroy()
     }
     stream.on('data', onData)
